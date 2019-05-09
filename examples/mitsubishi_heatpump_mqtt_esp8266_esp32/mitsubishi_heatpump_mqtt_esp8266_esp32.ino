@@ -1,9 +1,10 @@
 
 #ifdef ESP32
-#include <WiFi.h>
+  #include <WiFi.h>
 #else
-#include <ESP8266WiFi.h>
+  #include <ESP8266WiFi.h>
 #endif
+
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <HeatPump.h>
@@ -11,13 +12,13 @@
 #include "mitsubishi_heatpump_mqtt_esp8266_esp32.h"
 
 #ifdef OTA
-#ifdef ESP32
-#include <WiFiUdp.h>
-#include <ESPmDNS.h>
-#else
-#include <ESP8266mDNS.h>
-#endif
-#include <ArduinoOTA.h>
+  #ifdef ESP32
+    #include <WiFiUdp.h>
+    #include <ESPmDNS.h>
+  #else
+    #include <ESP8266mDNS.h>
+  #endif
+  #include <ArduinoOTA.h>
 #endif
 
 // wifi, mqtt and heatpump client instances
@@ -28,7 +29,7 @@ unsigned long lastTempSend;
 
 // debug mode, when true, will send all packets received from the heatpump to topic heatpump_debug_topic
 // this can also be set by sending "on" to heatpump_debug_set_topic
-bool _debugMode = true;
+bool _debugMode = false;
 
 
 void setup() {
@@ -53,20 +54,23 @@ void setup() {
   mqtt_client.setServer(mqtt_server, mqtt_port);
   mqtt_client.setCallback(mqttCallback);
   mqttConnect();
-
   // connect to the heatpump. Callbacks first so that the hpPacketDebug callback is available for connect()
   hp.setSettingsChangedCallback(hpSettingsChanged);
   hp.setStatusChangedCallback(hpStatusChanged);
   hp.setPacketCallback(hpPacketDebug);
 
-#ifdef OTA
+  #ifdef OTA
   ArduinoOTA.setHostname(client_id);
   ArduinoOTA.setPassword(ota_password);
   ArduinoOTA.begin();
-#endif
+  #endif
 
   hp.connect(&Serial);
 
+  #ifdef HA
+  mqttAutoDiscovery();
+  #endif
+  
   lastTempSend = millis();
 }
 
@@ -136,7 +140,7 @@ void hpPacketDebug(byte* packet, unsigned int length, char* packetDirection) {
       message += String(packet[idx], HEX) + " ";
     }
 
-    const size_t bufferSize = JSON_OBJECT_SIZE(6);
+    const size_t bufferSize = JSON_OBJECT_SIZE(8);
     DynamicJsonDocument root(bufferSize);
 
     root[packetDirection] = message;
@@ -169,7 +173,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       return;
     }
 
-    // Step 3: Retrieve the values
+    // Retrieve the values
     if (root.containsKey("power")) {
       const char* power = root["power"];
       hp.setPowerSetting(power);
@@ -235,9 +239,38 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
         mqtt_client.publish(heatpump_debug_topic, "heatpump: update() failed");
       }
     }
-
+  #ifdef HA
+  } else if (strcmp(topic, heatpump_set_mode_topic) == 0) { //if the incoming message is on the heatpump_set_mode_topic topic...
+      if (strcmp(message, "off") == 0) {
+        const char* power = "OFF";
+        hp.setPowerSetting(power);
+      } else if (strcmp(message, "fan_only") == 0) {
+        const char* power = "ON";
+        hp.setPowerSetting(power);      
+        const char* mode = "FAN";
+        hp.setModeSetting(mode);
+      } else {
+        const char* power = "ON";
+        hp.setPowerSetting(power);
+        const char* mode = strupr(message);
+        hp.setModeSetting(mode);
+      }
+      hp.update();
+  } else if (strcmp(topic, heatpump_set_temp_topic) == 0) { //if the incoming message is on the heatpump_set_temp_topic topic...
+      float temperature = atof(message);
+      hp.setTemperature(temperature);
+      hp.update();
+  } else if (strcmp(topic, heatpump_set_fan_topic) == 0) { //if the incoming message is on the heatpump_set_fan_topic topic...
+      const char* fan = strupr(message);      
+      hp.setFanSpeed(fan);
+      hp.update();
+  } else if (strcmp(topic, heatpump_set_vane_topic) == 0) { //if the incoming message is on the heatpump_set_vane_topic topic...
+      const char* vane = strupr(message);
+      hp.setVaneSetting(vane);
+      hp.update();
+  #endif
   } else if (strcmp(topic, heatpump_debug_set_topic) == 0) { //if the incoming message is on the heatpump_debug_set_topic topic...
-    if (strcmp(message, "on") == 0) {
+      if (strcmp(message, "on") == 0) {
       _debugMode = true;
       mqtt_client.publish(heatpump_debug_topic, "debug mode enabled");
     } else if (strcmp(message, "off") == 0) {
@@ -256,12 +289,86 @@ void mqttConnect() {
     if (mqtt_client.connect(client_id, mqtt_username, mqtt_password)) {
       mqtt_client.subscribe(heatpump_set_topic);
       mqtt_client.subscribe(heatpump_debug_set_topic);
+      #ifdef HA
+      mqtt_client.subscribe(heatpump_set_mode_topic);
+      mqtt_client.subscribe(heatpump_set_temp_topic);
+      mqtt_client.subscribe(heatpump_set_fan_topic);
+      mqtt_client.subscribe(heatpump_set_vane_topic);
+      #endif
     } else {
       // Wait 5 seconds before retrying
       delay(5000);
     }
   }
 }
+
+#ifdef HA
+void mqttAutoDiscovery() {
+  const String chip_id                 = String(ESP.getChipId());
+  const String mqtt_discov_topic       = String(mqtt_discov_prefix) + "/climate/" + chip_id + "/config";
+  
+  const size_t bufferSizeDiscovery = JSON_OBJECT_SIZE(50);
+  DynamicJsonDocument rootDiscovery(bufferSizeDiscovery);
+
+  rootDiscovery["name"]                = ha_entity_id;
+  rootDiscovery["uniq_id"]             = chip_id;
+  rootDiscovery["~"]                   = heatpump_topic;
+  rootDiscovery["mode_cmd_t"]          = heatpump_set_mode_topic;
+  rootDiscovery["temp_cmd_t"]          = heatpump_set_temp_topic;
+  rootDiscovery["fan_mode_cmd_t"]      = heatpump_set_fan_topic;
+  rootDiscovery["swing_mode_cmd_t"]    = heatpump_set_vane_topic;
+  rootDiscovery["min_temp"]            = min_temp;
+  rootDiscovery["max_temp"]            = max_temp;
+  rootDiscovery["temp_step"]           = temp_step;
+  JsonArray modes                 = rootDiscovery.createNestedArray("modes");
+    modes.add("off");
+    modes.add("auto");
+    modes.add("cool");
+    modes.add("dry");
+    modes.add("heat");
+    modes.add("fan_only");
+  JsonArray fan_modes             = rootDiscovery.createNestedArray("fan_modes");
+    fan_modes.add("auto");
+    fan_modes.add("quiet");
+    fan_modes.add("1");
+    fan_modes.add("2");
+    fan_modes.add("3");
+    fan_modes.add("4");
+  JsonArray swing_modes           = rootDiscovery.createNestedArray("swing_modes");
+    swing_modes.add("auto");
+    swing_modes.add("1");
+    swing_modes.add("2");
+    swing_modes.add("3");
+    swing_modes.add("4");
+    swing_modes.add("5");
+    swing_modes.add("swing");
+  rootDiscovery["curr_temp_t"]         = "~/status";
+  rootDiscovery["current_temperature_template"] = "{{ value_json.roomTemperature }}";
+  rootDiscovery["mode_stat_t"]         = "~";
+  rootDiscovery["mode_stat_tpl"]       = "{{ 'off' if value_json.power == 'OFF' else value_json.mode | lower | replace('fan', 'fan_only')}}";
+  rootDiscovery["temp_stat_t"]         = "~";
+  rootDiscovery["temp_stat_tpl"]       = "{{ value_json.temperature }}";
+  rootDiscovery["fan_mode_stat_t"]     = "~";
+  rootDiscovery["fan_mode_stat_tpl"]   = "{{ value_json.fan | lower }}";
+  rootDiscovery["swing_mode_stat_t"]   = "~";
+  rootDiscovery["swing_mode_stat_tpl"] = "{{ value_json.vane | lower }}";
+  JsonObject device                    = rootDiscovery.createNestedObject("device");
+    device["name"]                     = ha_entity_id;
+    JsonArray ids = device.createNestedArray("ids");
+      ids.add(chip_id);
+    device["mf"]                       = "UNIXKO";
+    device["mdl"]                      = "Mitsubishi Electric Heat Pump";
+    device["sw"]                       = controller_sw_version;
+
+  char bufferDiscovery[1280];
+  serializeJson(rootDiscovery, bufferDiscovery);
+
+  bool retain = true;
+  if (!mqtt_client.publish(mqtt_discov_topic.c_str(), bufferDiscovery, retain)) {
+    mqtt_client.publish(heatpump_debug_topic, "failed to publish to HA Discovery topic");
+  }
+}
+#endif
 
 void loop() {
   if (!mqtt_client.connected()) {
