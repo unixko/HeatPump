@@ -1,7 +1,8 @@
 
 //#define ESP32
-//#define OTA
-//const char* ota_password = "<YOUR OTA PASSWORD GOES HERE>";
+
+//#define OTA	//Unmask this line to enable OTA
+//const char* ota_password = "<YOUR OTA PASSWORD GOES HERE>";	
 
 // wifi settings
 const char* ssid     = "<YOUR WIFI SSID GOES HERE>";
@@ -30,3 +31,20 @@ const int blueLedPin = 2; // Onboard LED = digital pin 0 (blue LED on adafruit E
 
 // sketch settings
 const unsigned int SEND_ROOM_TEMP_INTERVAL_MS = 60000;
+
+// Home Assistant MQTT Discovery
+// Set PubSubClient.h MQTT_MAX_PACKET_SIZE to 1280
+//#define HA
+//const char* heatpump_set_mode_topic     = "heatpump/set/mode";
+//const char* heatpump_set_temp_topic     = "heatpump/set/temp";
+//const char* heatpump_set_fan_topic      = "heatpump/set/fan";
+//const char* heatpump_set_vane_topic     = "heatpump/set/vane";
+//const char* ha_entity_id                = "Living ROom Air Conditioner"; // Device Name displayed in Home Assistant
+//const char* min_temp                    = "16"; // Minimum temperature, check value from heatpump remote control
+//const char* max_temp                    = "31"; // Maximum temperature, check value from heatpump remote control
+//const char* temp_step                   = "1"; // Temperature setting step, check value from heatpump remote control
+//const char* mqtt_discov_prefix          = "homeassistant"; // Home Assistant MQTT Discovery Prefix
+//const char* controller_sw_version       = "20190509-2310"; // Software Version displayed in Home Assistant
+
+// For Heat Pump library issue please refer to https://github.com/SwiCago/HeatPump .
+// For Home Assistant issue please refer to https://github.com/unixko/HeatPump .
